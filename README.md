@@ -114,7 +114,6 @@ python cli.py -e "Custom scenario" --no-research --players-json players.json
 ├── cli.py                 # Command-line interface
 ├── app.py                 # Gradio web application
 ├── requirements.txt       # Python dependencies
-├── AGENTS.md              # Detailed project plan
 └── README.md              # This file
 ```
 
