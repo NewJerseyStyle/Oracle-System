@@ -52,33 +52,82 @@ class LocalResearchClient:
         try:
             self._log(f"Attempting to register user '{self.username}'...")
             
-            csrf_token = self._get_csrf_token(f"{self.base_url}/auth/register")
+            # Get registration page
+            register_url = f"{self.base_url}/auth/register"
+            register_page = self.session.get(register_url, timeout=10)
+            
+            if register_page.status_code == 404:
+                self._log("Registration page not found - auth may be disabled")
+                return True, "Registration page not found (auth likely disabled)"
+            
+            if register_page.status_code != 200:
+                self._log(f"Registration page returned {register_page.status_code}")
+                return False, f"Registration page returned {register_page.status_code}"
+            
+            # Extract CSRF token
+            soup = BeautifulSoup(register_page.text, 'html.parser')
+            csrf_input = soup.find('input', {'name': 'csrf_token'})
+            csrf_token = csrf_input.get('value') if csrf_input else None
+            
+            # Also try meta tag for CSRF
             if not csrf_token:
-                return False, "Could not get CSRF token from registration page"
+                csrf_meta = soup.find('meta', {'name': 'csrf-token'})
+                csrf_token = csrf_meta.get('content') if csrf_meta else None
+            
+            if not csrf_token:
+                self._log("No CSRF token found, trying without it...")
+            
+            # Prepare registration data
+            register_data = {
+                "username": self.username,
+                "password": self.password,
+            }
+            
+            # Check for different password field names
+            password_fields = ['confirm_password', 'confirmPassword', 'password_confirm', 'password2']
+            for field in password_fields:
+                if soup.find('input', {'name': field}):
+                    register_data[field] = self.password
+            
+            if csrf_token:
+                register_data["csrf_token"] = csrf_token
 
+            self._log(f"Sending registration request with fields: {list(register_data.keys())}")
+            
             register_response = self.session.post(
-                f"{self.base_url}/auth/register",
-                data={
-                    "username": self.username,
-                    "password": self.password,
-                    "confirm_password": self.password,
-                    "csrf_token": csrf_token
-                },
+                register_url,
+                data=register_data,
                 timeout=10,
                 allow_redirects=True
             )
 
+            self._log(f"Registration response status: {register_response.status_code}")
+            
             if register_response.status_code in [200, 302]:
-                # Check if registration was successful by looking for success indicators
-                if "success" in register_response.text.lower() or "registered" in register_response.text.lower():
+                response_text = register_response.text.lower()
+                
+                # Check for success indicators
+                if any(s in response_text for s in ["success", "registered", "account created", "welcome"]):
                     self._log("Registration successful!")
                     return True, "Registration successful"
-                # Check for errors in response
-                if "already exists" in register_response.text.lower() or "username" in register_response.text.lower():
+                
+                # Check if user already exists (also success - proceed to login)
+                if any(s in response_text for s in ["already exists", "username taken", "already registered"]):
+                    self._log("User already exists")
                     return True, "User already exists, proceeding to login"
+                
+                # Check for errors
+                if any(s in response_text for s in ["error", "invalid", "failed"]):
+                    # Extract error message if possible
+                    self._log(f"Registration may have failed - check response")
+                
+                # If we got redirected to login or home page, registration likely succeeded
+                if "/auth/login" in register_response.url or register_response.url.rstrip("/").endswith(":5000"):
+                    self._log("Redirected after registration - likely success")
+                    return True, "Registration request sent (redirected)"
+                
                 return True, "Registration request sent"
             
-            self._log(f"Registration failed with status {register_response.status_code}")
             return False, f"Registration failed with status {register_response.status_code}"
         except requests.exceptions.RequestException as e:
             self._log(f"Registration error: {e}")
@@ -142,14 +191,43 @@ class LocalResearchClient:
         """Try to use the API without authentication (some LDR versions allow this)."""
         try:
             self._log("Checking if API works without authentication...")
-            response = self.session.get(f"{self.base_url}/api/settings", timeout=10)
-            if response.status_code == 200:
-                self._authenticated = True
-                self._log("API accessible without authentication")
-                return True
+            
+            # Try various endpoints that might not require auth
+            for endpoint in ["/api/settings", "/api/available_models", "/api/version"]:
+                try:
+                    response = self.session.get(f"{self.base_url}{endpoint}", timeout=10)
+                    if response.status_code == 200:
+                        self._authenticated = True
+                        self._log(f"API accessible without authentication via {endpoint}")
+                        return True
+                except:
+                    continue
         except:
             pass
         return False
+    
+    def register_via_api(self) -> tuple[bool, str]:
+        """Try to register via REST API (if LDR supports it)."""
+        try:
+            self._log("Trying API-based registration...")
+            
+            response = self.session.post(
+                f"{self.base_url}/api/auth/register",
+                json={
+                    "username": self.username,
+                    "password": self.password
+                },
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                self._log("API registration successful!")
+                return True, "API registration successful"
+            
+            return False, f"API registration returned {response.status_code}"
+        except requests.exceptions.RequestException as e:
+            self._log(f"API registration not available: {e}")
+            return False, "API registration not available"
 
     def ensure_authenticated(self) -> tuple[bool, str]:
         """
@@ -168,6 +246,14 @@ class LocalResearchClient:
         if self.try_no_auth():
             return True, ""
         
+        # Try API-based registration (cleaner)
+        api_success, api_msg = self.register_via_api()
+        if api_success:
+            time.sleep(0.5)
+            success, msg = self.login()
+            if success:
+                return True, ""
+        
         # Try login with provided credentials
         success, msg = self.login()
         if success:
@@ -175,7 +261,7 @@ class LocalResearchClient:
         
         self._log(f"Login failed: {msg}")
         
-        # Try to register new user
+        # Try form-based registration
         reg_success, reg_msg = self.register_user()
         if reg_success:
             time.sleep(1)
@@ -202,19 +288,20 @@ class LocalResearchClient:
         
         return False, f"""Failed to authenticate with Local Deep Research.
 
-OPTIONS:
+AUTOMATIC AUTHENTICATION FAILED.
 
-1. Create a user manually:
-   Open {self.base_url}/auth/register in your browser
-   Create username/password, then set environment variables:
+This usually means registration is disabled in LDR config.
+
+QUICK FIX:
+1. Open http://localhost:5000/auth/register in your browser
+2. Create a user manually
+3. Set credentials:
    export LDR_USERNAME="your_username"
    export LDR_PASSWORD="your_password"
 
-2. Or pass credentials in code:
-   client = LocalResearchClient(username="your_user", password="your_pass")
-
-3. Check if LDR requires authentication:
-   Some versions don't require login. Visit {self.base_url} to check."""
+OR disable LDR auth entirely by editing docker-compose.yml:
+   Add: LDR_APP_ALLOW_REGISTRATIONS=true
+   (and ensure the line is NOT commented out)"""
 
     def start_research(
         self,
@@ -228,8 +315,10 @@ OPTIONS:
         if not self._authenticated and not self.login():
             return None
 
-        headers = {"X-CSRF-Token": self.csrf_token}
-        
+        headers = {}
+        if self.csrf_token:
+            headers["X-CSRF-Token"] = self.csrf_token
+
         payload = {
             "query": query,
             "iterations": iterations,
