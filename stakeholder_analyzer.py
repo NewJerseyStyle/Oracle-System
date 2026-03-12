@@ -24,6 +24,143 @@ class StakeholderAnalyzer:
         )
         self.model = openrouter_model or config.OPENROUTER_MODEL
 
+    def enhance_query(self, user_query: str) -> Dict[str, str]:
+        """
+        Transform a simple user query into a comprehensive research query
+        that collects information about all stakeholders and their influencers.
+        
+        Key principle: Break down organizations and governments into INDIVIDUAL
+        decision-makers, not treat them as monolithic actors. This captures
+        internal dynamics and early warning signals of policy shifts.
+        
+        Args:
+            user_query: The user's original (potentially vague) query
+            
+        Returns:
+            Dict with 'enhanced_query', 'focus_areas', and 'explanation'
+        """
+        prompt = f"""
+You are helping a user research geopolitical stakeholders. Their query is: "{user_query}"
+
+Transform this into a comprehensive research query. CRITICAL: Do NOT treat organizations or governments as single actors. Instead, identify the SPECIFIC INDIVIDUALS within them who make decisions.
+
+Create a JSON response with:
+
+1. "enhanced_query": A detailed research query (3-4 sentences) that asks about:
+
+   **Governments** - Break down into individuals:
+   - Head of state/government (President, PM, Supreme Leader)
+   - Foreign affairs officials (Foreign Minister, Secretary of State)
+   - Military/Defense leaders (Defense Minister, military chiefs)
+   - Security/Intelligence chiefs
+   - Key legislators and committee chairs
+   - Internal factions and their leaders
+   
+   **International Organizations** (UN, EU, NATO, etc.) - Break down into:
+   - Secretary General / President
+   - Key commissioners, directors, or representatives
+   - Member state representatives who influence decisions
+   - Internal bureaus and their heads
+   
+   **Non-State Actors** (corporations, NGOs, militias, religious groups) - Break down into:
+   - CEO, board members, major shareholders
+   - Key commanders, regional leaders
+   - Religious authorities, ideological leaders
+   - Major donors and financiers
+   
+   **Influence Networks** for each individual:
+   - Personal advisors, chiefs of staff
+   - Family members with influence
+   - Business partners, donors
+   - Ideological allies, media allies
+   - Early signs of position changes or internal disagreements
+
+2. "focus_areas": An array of 6-10 specific aspects to research:
+   - "Individual decision-makers within each government"
+   - "Internal factions and power struggles"
+   - "Personal positions vs official institutional positions"
+   - "Early warning signals of policy shifts from individuals"
+   - "Cross-cutting alliances between individuals across institutions"
+   - "Advisors and influence networks for each key person"
+   - "Public and private statements showing divergent views"
+   - "Recent personnel changes signaling policy direction"
+
+3. "explanation": Brief explanation (1-2 sentences)
+
+4. "stakeholder_categories": Categories focused on individuals:
+   e.g., ["Heads of State", "Foreign Ministers", "Military Chiefs", "Organization Leaders", 
+   "Key Legislators", "Personal Advisors", "Business Elites", "Internal Opposition"]
+
+Return ONLY valid JSON, no markdown formatting.
+"""
+
+        try:
+            response = self.llm_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a geopolitical research assistant. Return only valid JSON, no markdown."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.5,
+                max_tokens=1200
+            )
+
+            content = response.choices[0].message.content.strip()
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            
+            if json_match:
+                result = json.loads(json_match.group())
+                result["original_query"] = user_query
+                return result
+            
+        except Exception as e:
+            pass
+
+        return {
+            "original_query": user_query,
+            "enhanced_query": f"""
+Who are the SPECIFIC INDIVIDUAL decision-makers involved in: {user_query}
+
+IMPORTANT: Do NOT list organizations as actors. Break down each institution into its key people:
+
+GOVERNMENTS: Identify the head of state, foreign minister, defense minister, military chiefs, key legislators, and internal faction leaders. Note any public disagreements or divergent positions.
+
+ORGANIZATIONS (UN, EU, NATO, etc.): Identify the Secretary General, key commissioners, and influential member state representatives. Track their individual positions.
+
+NON-STATE ACTORS: Identify specific leaders, commanders, major donors, and ideological influencers.
+
+For EACH individual, research:
+1. Their official position and actual decision-making power
+2. Their personal stance (may differ from official position)
+3. Who influences them (advisors, family, donors, allies)
+4. Recent statements or actions signaling position changes
+5. Relationships with other individuals (alliances, rivalries)
+
+Look for EARLY WARNING SIGNALS: individual statements that diverge from official positions, internal disagreements, personnel changes that signal policy shifts.
+            """.strip(),
+            "focus_areas": [
+                "Individual decision-makers within governments (not governments as wholes)",
+                "Internal factions and power struggles",
+                "Personal positions vs official institutional positions",
+                "Early warning signals from individuals",
+                "Key people within international organizations",
+                "Advisors and influence networks",
+                "Cross-institutional alliances between individuals",
+                "Recent personnel changes and what they signal"
+            ],
+            "stakeholder_categories": [
+                "Heads of State/Government",
+                "Foreign Ministers & Diplomats",
+                "Military/Defense Chiefs",
+                "Organization Leaders (UN, EU, NATO)",
+                "Key Legislators",
+                "Internal Faction Leaders",
+                "Personal Advisors",
+                "Business/Donor Networks"
+            ],
+            "explanation": "Broken down institutions into individual decision-makers to capture internal dynamics and early warning signals of policy shifts."
+        }
+
     def extract_players_with_llm(self, research_text: str, event_context: str) -> List[Dict[str, Any]]:
         """
         Use LLM to extract and quantify stakeholder data from research results.
@@ -154,7 +291,8 @@ Research text:
         self,
         event_query: str,
         use_research: bool = True,
-        existing_players: List[Dict] = None
+        existing_players: List[Dict] = None,
+        enhance_query: bool = True
     ) -> Dict[str, Any]:
         """
         Main analysis pipeline: research -> extract -> analyze -> lobby-ability.
@@ -163,12 +301,14 @@ Research text:
             event_query: The event/conflict to analyze
             use_research: Whether to use local research (False = use existing_players)
             existing_players: Pre-defined players (skips research if provided)
+            enhance_query: Whether to enhance simple queries into comprehensive ones
             
         Returns:
             Complete analysis results
         """
         results = {
             "event": event_query,
+            "enhanced_query": None,
             "players": [],
             "equilibrium": None,
             "war_risk": None,
@@ -177,8 +317,15 @@ Research text:
             "errors": []
         }
 
+        research_query = event_query
+        
+        if enhance_query and use_research and not existing_players:
+            enhancement = self.enhance_query(event_query)
+            results["enhanced_query"] = enhancement
+            research_query = enhancement.get("enhanced_query", event_query)
+
         if use_research and not existing_players:
-            research = self.local_research.search_stakeholders(event_query)
+            research = self.local_research.search_stakeholders(research_query)
             
             if "error" in research:
                 results["errors"].append(f"Research error: {research['error']}")

@@ -39,8 +39,19 @@ def print_table(headers: list, rows: list, widths: list = None):
         print(" | ".join(str(v).ljust(w) for v, w in zip(row, widths)))
 
 
-def display_results(results: Dict[str, Any], verbose: bool = False):
+def display_results(results: Dict[str, Any], verbose: bool = False, show_enhanced: bool = True):
     """Display analysis results in formatted output."""
+    
+    if results.get("enhanced_query") and show_enhanced:
+        eq = results["enhanced_query"]
+        print_section("ENHANCED QUERY")
+        print(f"  Original: {eq.get('original_query', 'N/A')}")
+        print(f"  Enhanced: {eq.get('enhanced_query', 'N/A')[:200]}...")
+        print(f"  \n  Explanation: {eq.get('explanation', 'N/A')}")
+        if eq.get('focus_areas'):
+            print("\n  Focus Areas:")
+            for area in eq['focus_areas'][:5]:
+                print(f"    - {area}")
     
     if results.get("errors"):
         print_section("ERRORS")
@@ -167,6 +178,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--no-enhance",
+        action="store_true",
+        help="Skip query enhancement (use original query as-is)"
+    )
+    
+    parser.add_argument(
         "--players-json",
         default=None,
         help="JSON file with pre-defined players (skips research)"
@@ -221,10 +238,11 @@ Examples:
     results = analyzer.analyze_event(
         event_query=args.event,
         use_research=not args.no_research,
-        existing_players=existing_players
+        existing_players=existing_players,
+        enhance_query=not args.no_enhance
     )
     
-    display_results(results, verbose=args.verbose)
+    display_results(results, verbose=args.verbose, show_enhanced=not args.no_enhance)
     
     if args.output_json:
         with open(args.output_json, 'w') as f:
