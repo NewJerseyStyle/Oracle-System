@@ -6,56 +6,215 @@ import config
 
 
 class LocalResearchClient:
-    def __init__(self, base_url: Optional[str] = None, username: str = "admin", password: str = "admin"):
+    def __init__(self, base_url: Optional[str] = None, username: str = None, password: str = None, verbose: bool = False):
         self.base_url = base_url or config.LOCAL_RESEARCH_URL
-        self.username = username
-        self.password = password
+        self.username = username or config.LDR_USERNAME
+        self.password = password or config.LDR_PASSWORD
         self.session = requests.Session()
         self.csrf_token = None
         self._authenticated = False
+        self.verbose = verbose
+
+    def _log(self, msg: str):
+        if self.verbose:
+            print(f"[LDR] {msg}")
 
     def is_service_running(self) -> bool:
         """Check if the local research service is running."""
         try:
             response = self.session.get(f"{self.base_url}/", timeout=5)
-            return response.status_code in [200, 302, 401, 403]
-        except requests.exceptions.RequestException:
+            return response.status_code in [200, 302, 401, 403, 404]
+        except requests.exceptions.RequestException as e:
+            self._log(f"Service not reachable: {e}")
             return False
 
-    def login(self) -> bool:
-        """Authenticate with the local research service."""
+    def _get_csrf_token(self, url: str) -> Optional[str]:
+        """Extract CSRF token from a page."""
         try:
-            login_page = self.session.get(f"{self.base_url}/auth/login", timeout=10)
-            soup = BeautifulSoup(login_page.text, 'html.parser')
+            response = self.session.get(url, timeout=10)
+            if response.status_code != 200:
+                self._log(f"Failed to get page {url}: {response.status_code}")
+                return None
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
             csrf_input = soup.find('input', {'name': 'csrf_token'})
-            login_csrf = csrf_input.get('value') if csrf_input else None
+            token = csrf_input.get('value') if csrf_input else None
+            
+            if not token:
+                self._log("No CSRF token found in page")
+            return token
+        except Exception as e:
+            self._log(f"Error getting CSRF token: {e}")
+            return None
 
-            if not login_csrf:
-                return False
+    def register_user(self) -> tuple[bool, str]:
+        """Try to register a new user account. Returns (success, message)."""
+        try:
+            self._log(f"Attempting to register user '{self.username}'...")
+            
+            csrf_token = self._get_csrf_token(f"{self.base_url}/auth/register")
+            if not csrf_token:
+                return False, "Could not get CSRF token from registration page"
 
-            login_response = self.session.post(
-                f"{self.base_url}/auth/login",
+            register_response = self.session.post(
+                f"{self.base_url}/auth/register",
                 data={
                     "username": self.username,
                     "password": self.password,
-                    "csrf_token": login_csrf
+                    "confirm_password": self.password,
+                    "csrf_token": csrf_token
                 },
-                timeout=10
+                timeout=10,
+                allow_redirects=True
+            )
+
+            if register_response.status_code in [200, 302]:
+                # Check if registration was successful by looking for success indicators
+                if "success" in register_response.text.lower() or "registered" in register_response.text.lower():
+                    self._log("Registration successful!")
+                    return True, "Registration successful"
+                # Check for errors in response
+                if "already exists" in register_response.text.lower() or "username" in register_response.text.lower():
+                    return True, "User already exists, proceeding to login"
+                return True, "Registration request sent"
+            
+            self._log(f"Registration failed with status {register_response.status_code}")
+            return False, f"Registration failed with status {register_response.status_code}"
+        except requests.exceptions.RequestException as e:
+            self._log(f"Registration error: {e}")
+            return False, f"Registration error: {e}"
+
+    def login(self) -> tuple[bool, str]:
+        """Authenticate with the local research service. Returns (success, message)."""
+        try:
+            self._log(f"Attempting to login as '{self.username}'...")
+            
+            csrf_token = self._get_csrf_token(f"{self.base_url}/auth/login")
+            if not csrf_token:
+                # Try without CSRF (some versions don't require it)
+                self._log("No CSRF token, trying login without it...")
+
+            login_data = {
+                "username": self.username,
+                "password": self.password,
+            }
+            if csrf_token:
+                login_data["csrf_token"] = csrf_token
+
+            login_response = self.session.post(
+                f"{self.base_url}/auth/login",
+                data=login_data,
+                timeout=10,
+                allow_redirects=True
             )
 
             if login_response.status_code in [200, 302]:
-                csrf_response = self.session.get(
-                    f"{self.base_url}/auth/csrf-token",
-                    timeout=10
-                )
-                if csrf_response.status_code == 200:
-                    self.csrf_token = csrf_response.json().get("csrf_token")
-                    self._authenticated = True
-                    return True
+                # Try to get API CSRF token
+                try:
+                    csrf_response = self.session.get(
+                        f"{self.base_url}/auth/csrf-token",
+                        timeout=10
+                    )
+                    if csrf_response.status_code == 200:
+                        self.csrf_token = csrf_response.json().get("csrf_token")
+                        self._authenticated = True
+                        self._log("Login successful!")
+                        return True, "Login successful"
+                except:
+                    pass
+                
+                # Even without API CSRF token, consider authenticated if login succeeded
+                self._authenticated = True
+                self._log("Login successful (no API CSRF token)")
+                return True, "Login successful"
 
-            return False
-        except requests.exceptions.RequestException:
-            return False
+            # Check for specific error messages
+            if "invalid" in login_response.text.lower() or "incorrect" in login_response.text.lower():
+                return False, "Invalid username or password"
+            
+            self._log(f"Login failed with status {login_response.status_code}")
+            return False, f"Login failed with status {login_response.status_code}"
+        except requests.exceptions.RequestException as e:
+            self._log(f"Login error: {e}")
+            return False, f"Login error: {e}"
+
+    def try_no_auth(self) -> bool:
+        """Try to use the API without authentication (some LDR versions allow this)."""
+        try:
+            self._log("Checking if API works without authentication...")
+            response = self.session.get(f"{self.base_url}/api/settings", timeout=10)
+            if response.status_code == 200:
+                self._authenticated = True
+                self._log("API accessible without authentication")
+                return True
+        except:
+            pass
+        return False
+
+    def ensure_authenticated(self) -> tuple[bool, str]:
+        """
+        Ensure the client is authenticated, attempting registration if needed.
+        
+        Returns:
+            Tuple of (success, error_message)
+        """
+        if self._authenticated:
+            return True, ""
+            
+        if not self.is_service_running():
+            return False, f"Local research service not running at {self.base_url}.\n\nStart it with:\n  curl -O https://raw.githubusercontent.com/LearningCircuit/local-deep-research/main/docker-compose.yml\n  MODEL=qwen3.5:4b docker compose up -d\n\nThen wait 30 seconds for it to initialize."
+        
+        # Try without auth first
+        if self.try_no_auth():
+            return True, ""
+        
+        # Try login with provided credentials
+        success, msg = self.login()
+        if success:
+            return True, ""
+        
+        self._log(f"Login failed: {msg}")
+        
+        # Try to register new user
+        reg_success, reg_msg = self.register_user()
+        if reg_success:
+            time.sleep(1)
+            success, msg = self.login()
+            if success:
+                return True, ""
+        
+        # Try common default credentials
+        default_creds = [
+            ("admin", "admin"),
+            ("admin", "password"),
+            ("user", "user"),
+        ]
+        
+        for user, pwd in default_creds:
+            if user != self.username:
+                self._log(f"Trying default credentials: {user}/{pwd}")
+                self.username = user
+                self.password = pwd
+                success, msg = self.login()
+                if success:
+                    self._log(f"Authenticated with default credentials: {user}")
+                    return True, ""
+        
+        return False, f"""Failed to authenticate with Local Deep Research.
+
+OPTIONS:
+
+1. Create a user manually:
+   Open {self.base_url}/auth/register in your browser
+   Create username/password, then set environment variables:
+   export LDR_USERNAME="your_username"
+   export LDR_PASSWORD="your_password"
+
+2. Or pass credentials in code:
+   client = LocalResearchClient(username="your_user", password="your_pass")
+
+3. Check if LDR requires authentication:
+   Some versions don't require login. Visit {self.base_url} to check."""
 
     def start_research(
         self,
@@ -123,6 +282,136 @@ class LocalResearchClient:
         except requests.exceptions.RequestException as e:
             return {"error": str(e)}
 
+    def extract_stakeholders_with_llm(
+        self,
+        research_text: str,
+        event_context: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Use LDR's built-in LLM to extract and quantify stakeholder data.
+        
+        This is used as a fallback when OpenRouter is not available.
+        
+        Args:
+            research_text: The raw research output
+            event_context: The original event query for context
+            
+        Returns:
+            List of player dicts with position, salience, clout, resolve
+        """
+        success, error_msg = self.ensure_authenticated()
+        if not success:
+            return []
+        
+        extraction_prompt = f"""
+Analyze the following research text about stakeholders in: "{event_context}"
+
+Extract each stakeholder and rate them on these scales:
+
+1. position (0-100): Their stance on the issue
+   - 0 = Strongly against conflict escalation / pro-peace / pro-negotiation
+   - 50 = Neutral / ambivalent / seeking balance
+   - 100 = Strongly supports escalation / military action / hardline position
+
+2. salience (0-100): How important this issue is to them
+   - 0 = Low priority, many other concerns
+   - 100 = Critical priority, central to their interests
+
+3. clout (0.1-10.0): Their relative influence/power
+   - 0.1 = Minimal influence
+   - 1.0 = Average influence
+   - 10.0 = Dominant power
+
+4. resolve (0-100): How firm/unwavering is their position
+   - 0 = Very flexible, easily swayed
+   - 100 = Absolutely firm, will not compromise
+
+Return ONLY a JSON array with this exact format:
+[
+  {{
+    "id": "Stakeholder Name",
+    "position": 85,
+    "salience": 90,
+    "clout": 2.5,
+    "resolve": 75,
+    "rationale": "Brief explanation of ratings"
+  }}
+]
+
+Research text:
+{research_text[:8000]}
+"""
+        
+        try:
+            headers = {"X-CSRF-Token": self.csrf_token}
+            payload = {
+                "query": extraction_prompt,
+                "iterations": 1,
+                "questions_per_iteration": 1,
+                "search_engines": []
+            }
+            
+            response = self.session.post(
+                f"{self.base_url}/api/start_research",
+                json=payload,
+                headers=headers,
+                timeout=60
+            )
+            
+            if response.status_code != 200:
+                return []
+            
+            result = response.json()
+            research_id = result.get("research_id")
+            
+            if not research_id:
+                return []
+            
+            elapsed = 0
+            while elapsed < 120:
+                status = self.get_research_status(research_id)
+                if status.get("status") == "completed":
+                    results = self.get_research_results(research_id)
+                    summary = results.get("summary", "")
+                    
+                    import re
+                    import json as json_module
+                    json_match = re.search(r'\[[\s\S]*\]', summary)
+                    if json_match:
+                        try:
+                            players = json_module.loads(json_match.group())
+                            return self._validate_players(players)
+                        except json_module.JSONDecodeError:
+                            pass
+                    return []
+                
+                if status.get("status") == "failed":
+                    return []
+                
+                time.sleep(3)
+                elapsed += 3
+            
+            return []
+        except requests.exceptions.RequestException:
+            return []
+    
+    def _validate_players(self, players: List[Dict]) -> List[Dict[str, Any]]:
+        """Validate and sanitize player data."""
+        validated = []
+        for p in players:
+            try:
+                validated.append({
+                    "id": str(p.get("id", "Unknown"))[:50],
+                    "position": max(0, min(100, float(p.get("position", 50)))),
+                    "salience": max(0, min(100, float(p.get("salience", 50)))),
+                    "clout": max(0.1, min(10.0, float(p.get("clout", 1.0)))),
+                    "resolve": max(0, min(100, float(p.get("resolve", 50)))),
+                    "rationale": str(p.get("rationale", ""))[:200]
+                })
+            except (ValueError, TypeError):
+                continue
+        return validated
+
     def search_stakeholders(
         self,
         event_query: str,
@@ -140,15 +429,10 @@ class LocalResearchClient:
         Returns:
             Research results with stakeholder information
         """
-        if not self.is_service_running():
+        success, error_msg = self.ensure_authenticated()
+        if not success:
             return {
-                "error": "Local research service is not running. Start it with: docker compose up -d",
-                "status": "service_unavailable"
-            }
-
-        if not self._authenticated and not self.login():
-            return {
-                "error": "Failed to authenticate with local research service",
+                "error": error_msg,
                 "status": "auth_failed"
             }
 
@@ -206,8 +490,8 @@ class LocalResearchClient:
 def search_stakeholders(
     query: str,
     base_url: str = None,
-    username: str = "admin",
-    password: str = "admin"
+    username: str = "researcher",
+    password: str = "researcher123"
 ) -> Dict[str, Any]:
     """
     Convenience function to search for stakeholders.

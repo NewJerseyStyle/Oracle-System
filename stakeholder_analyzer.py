@@ -18,11 +18,19 @@ class StakeholderAnalyzer:
         self.game_theory = GameTheoryClient(api_key=rapidapi_key)
         self.local_research = LocalResearchClient(base_url=ldr_url)
         
-        self.llm_client = OpenAI(
-            api_key=openrouter_key or config.OPENROUTER_API_KEY,
-            base_url=config.OPENROUTER_BASE_URL
-        )
+        self.openrouter_key = openrouter_key or config.OPENROUTER_API_KEY
+        self.llm_client = None
+        
+        if self.openrouter_key:
+            self.llm_client = OpenAI(
+                api_key=self.openrouter_key,
+                base_url=config.OPENROUTER_BASE_URL
+            )
         self.model = openrouter_model or config.OPENROUTER_MODEL
+    
+    def has_llm(self) -> bool:
+        """Check if OpenRouter LLM is available."""
+        return self.llm_client is not None
 
     def enhance_query(self, user_query: str) -> Dict[str, str]:
         """
@@ -39,6 +47,54 @@ class StakeholderAnalyzer:
         Returns:
             Dict with 'enhanced_query', 'focus_areas', and 'explanation'
         """
+        fallback_result = {
+            "original_query": user_query,
+            "enhanced_query": f"""
+Who are the SPECIFIC INDIVIDUAL decision-makers involved in: {user_query}
+
+IMPORTANT: Do NOT list organizations as actors. Break down each institution into its key people:
+
+GOVERNMENTS: Identify the head of state, foreign minister, defense minister, military chiefs, key legislators, and internal faction leaders. Note any public disagreements or divergent positions.
+
+ORGANIZATIONS (UN, EU, NATO, etc.): Identify the Secretary General, key commissioners, and influential member state representatives. Track their individual positions.
+
+NON-STATE ACTORS: Identify specific leaders, commanders, major donors, and ideological influencers.
+
+For EACH individual, research:
+1. Their official position and actual decision-making power
+2. Their personal stance (may differ from official position)
+3. Who influences them (advisors, family, donors, allies)
+4. Recent statements or actions signaling position changes
+5. Relationships with other individuals (alliances, rivalries)
+
+Look for EARLY WARNING SIGNALS: individual statements that diverge from official positions, internal disagreements, personnel changes that signal policy shifts.
+            """.strip(),
+            "focus_areas": [
+                "Individual decision-makers within governments (not governments as wholes)",
+                "Internal factions and power struggles",
+                "Personal positions vs official institutional positions",
+                "Early warning signals from individuals",
+                "Key people within international organizations",
+                "Advisors and influence networks",
+                "Cross-institutional alliances between individuals",
+                "Recent personnel changes and what they signal"
+            ],
+            "stakeholder_categories": [
+                "Heads of State/Government",
+                "Foreign Ministers & Diplomats",
+                "Military/Defense Chiefs",
+                "Organization Leaders (UN, EU, NATO)",
+                "Key Legislators",
+                "Internal Faction Leaders",
+                "Personal Advisors",
+                "Business/Donor Networks"
+            ],
+            "explanation": "Broken down institutions into individual decision-makers to capture internal dynamics and early warning signals of policy shifts."
+        }
+        
+        if not self.has_llm():
+            return fallback_result
+        
         prompt = f"""
 You are helping a user research geopolitical stakeholders. Their query is: "{user_query}"
 
@@ -165,6 +221,8 @@ Look for EARLY WARNING SIGNALS: individual statements that diverge from official
         """
         Use LLM to extract and quantify stakeholder data from research results.
         
+        Falls back to local-deep-research's Ollama if OpenRouter is not available.
+        
         Args:
             research_text: The raw research output
             event_context: The original event query for context
@@ -172,6 +230,9 @@ Look for EARLY WARNING SIGNALS: individual statements that diverge from official
         Returns:
             List of player dicts with position, salience, clout, resolve
         """
+        if not self.has_llm():
+            return self.local_research.extract_stakeholders_with_llm(research_text, event_context)
+        
         prompt = f"""
 Analyze the following research text about stakeholders in: "{event_context}"
 

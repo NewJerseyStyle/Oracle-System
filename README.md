@@ -48,20 +48,45 @@ MODEL=qwen3.5:4b docker compose up -d
 
 Wait ~30 seconds, then verify at http://localhost:5000
 
+**Authentication (First Time Setup):**
+
+Local Deep Research requires user authentication. On first run:
+
+1. Open http://localhost:5000/auth/register in your browser
+2. Create a username and password
+3. Set environment variables:
+   ```bash
+   export LDR_USERNAME="your_username"
+   export LDR_PASSWORD="your_password"
+   ```
+
+Or the script will auto-register with defaults (`researcher/researcher123`) if registration is enabled.
+
 ### 3. Set API Keys
 
 ```bash
 # Required: RapidAPI key for Game Theory API
 export RAPIDAPI_KEY="your-rapidapi-key"
 
-# Required: OpenRouter key for LLM-powered extraction
+# Optional: OpenRouter key for LLM-powered extraction
+# If not set, LDR's local Ollama will be used (slower)
 export OPENROUTER_API_KEY="your-openrouter-key"
+
+# Optional: LDR authentication (if you created custom credentials)
+export LDR_USERNAME="your_ldr_username"
+export LDR_PASSWORD="your_ldr_password"
 
 # Optional: Model selection (defaults to claude-3.5-sonnet)
 export OPENROUTER_MODEL="anthropic/claude-3.5-sonnet"
 ```
 
 ### 4. Run
+
+**First-time setup (recommended):**
+```bash
+# Verify LDR connection and authentication
+uv run python cli.py --setup
+```
 
 **CLI:**
 ```bash
@@ -109,6 +134,9 @@ Use `--no-enhance` to skip query enhancement and use your query as-is.
 ### CLI Examples
 
 ```bash
+# First-time setup (verify LDR connection)
+uv run python cli.py --setup
+
 # Simple query (auto-enhanced)
 uv run python cli.py --event "Iran war"
 
@@ -212,9 +240,11 @@ Higher scores indicate players who:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `RAPIDAPI_KEY` | Yes | - | RapidAPI key for Game Theory API |
-| `OPENROUTER_API_KEY` | Yes | - | OpenRouter API key for LLM |
+| `OPENROUTER_API_KEY` | No | - | OpenRouter API key for LLM (fallback: LDR's Ollama) |
 | `OPENROUTER_MODEL` | No | claude-3.5-sonnet | LLM model to use |
 | `LOCAL_RESEARCH_URL` | No | http://localhost:5000 | Local Deep Research URL |
+| `LDR_USERNAME` | No | researcher | LDR login username |
+| `LDR_PASSWORD` | No | researcher123 | LDR login password |
 
 ### Supported LLM Models
 
@@ -247,10 +277,31 @@ export RAPIDAPI_KEY="your-key"
 ```
 
 ### "Failed to authenticate with local research service"
-Default credentials are `admin/admin`. If you changed them:
+
+The script automatically tries to:
+1. Use API without authentication (some LDR versions)
+2. Login with provided credentials
+3. Auto-register a new user
+4. Try common default credentials (admin/admin, etc.)
+
+If all fail:
+
 ```bash
-# In Python
-client = LocalResearchClient(username="your_user", password="your_pass")
+# 1. Open LDR in browser and create a user
+open http://localhost:5000/auth/register
+
+# 2. Set credentials as environment variables
+export LDR_USERNAME="your_username"
+export LDR_PASSWORD="your_password"
+
+# 3. Run with verbose mode to debug
+uv run python cli.py --event "Iran war" -v
+```
+
+Or pass credentials directly:
+```python
+from local_research import LocalResearchClient
+client = LocalResearchClient(username="your_user", password="your_pass", verbose=True)
 ```
 
 ### LLM extraction returns empty

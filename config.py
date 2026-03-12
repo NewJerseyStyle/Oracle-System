@@ -15,6 +15,8 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
 
 # Local Deep Research Docker
 LOCAL_RESEARCH_URL = os.getenv("LOCAL_RESEARCH_URL", "http://localhost:5000")
+LDR_USERNAME = os.getenv("LDR_USERNAME", "researcher")
+LDR_PASSWORD = os.getenv("LDR_PASSWORD", "researcher123")
 
 # Analysis settings
 DEFAULT_SALIENCE = 50
@@ -36,10 +38,17 @@ def get_openrouter_headers():
         "X-Title": "Stakeholder Analysis Demo"
     }
 
-def validate_config():
+def validate_config(require_openrouter: bool = False):
+    """
+    Validate configuration.
+    
+    Args:
+        require_openrouter: If True, require OPENROUTER_API_KEY. 
+                           If False (default), LDR's Ollama will be used as fallback.
+    """
     errors = []
     if not RAPIDAPI_KEY:
         errors.append("RAPIDAPI_KEY not set")
-    if not OPENROUTER_API_KEY:
+    if require_openrouter and not OPENROUTER_API_KEY:
         errors.append("OPENROUTER_API_KEY not set")
     return errors

@@ -5,6 +5,7 @@ CLI for Stakeholder Analysis & Game Theory Predictions
 Usage:
     python cli.py --event "Iran war stakeholders"
     python cli.py -e "Gaza war decision makers" --api-key YOUR_KEY
+    python cli.py --setup  # Configure LDR authentication
 """
 
 import argparse
@@ -15,6 +16,49 @@ from typing import Dict, Any
 
 import config
 from stakeholder_analyzer import StakeholderAnalyzer
+from local_research import LocalResearchClient
+
+
+def run_setup():
+    """Interactive setup for Local Deep Research authentication."""
+    print("\n" + "="*60)
+    print(" Local Deep Research Setup")
+    print("="*60)
+    
+    client = LocalResearchClient(verbose=True)
+    
+    print(f"\n1. Checking if LDR is running at {client.base_url}...")
+    if not client.is_service_running():
+        print("\n❌ LDR is not running!")
+        print("\nStart it with:")
+        print("  curl -O https://raw.githubusercontent.com/LearningCircuit/local-deep-research/main/docker-compose.yml")
+        print("  MODEL=qwen3.5:4b docker compose up -d")
+        print("\nThen wait 30 seconds and run this setup again.")
+        return False
+    
+    print("✅ LDR is running!")
+    
+    print("\n2. Attempting authentication...")
+    success, msg = client.ensure_authenticated()
+    
+    if success:
+        print(f"✅ {msg}")
+        print("\nSetup complete! You can now run analysis:")
+        print(f"  uv run python cli.py --event \"Iran war\" --api-key YOUR_KEY")
+        return True
+    else:
+        print(f"❌ {msg}")
+        print("\n" + "-"*60)
+        print("Manual Setup Required:")
+        print("-"*60)
+        print(f"\n1. Open {client.base_url}/auth/register in your browser")
+        print("2. Create a username and password")
+        print("3. Set environment variables:")
+        print("   export LDR_USERNAME='your_username'")
+        print("   export LDR_PASSWORD='your_password'")
+        print("\n4. Run this setup again to verify:")
+        print("   uv run python cli.py --setup")
+        return False
 
 
 def print_section(title: str):
@@ -143,8 +187,14 @@ Examples:
     
     parser.add_argument(
         "-e", "--event",
-        required=True,
+        default=None,
         help="Event/conflict to analyze (e.g., 'Iran war stakeholders')"
+    )
+    
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Run interactive setup for Local Deep Research authentication"
     )
     
     parser.add_argument(
@@ -203,6 +253,15 @@ Examples:
     
     args = parser.parse_args()
     
+    # Handle --setup flag
+    if args.setup:
+        success = run_setup()
+        sys.exit(0 if success else 1)
+    
+    # Event is required if not running setup
+    if not args.event:
+        parser.error("--event is required (or use --setup for initial configuration)")
+    
     api_key = args.api_key or config.RAPIDAPI_KEY
     openrouter_key = args.openrouter_key or config.OPENROUTER_API_KEY
     model = args.model or config.OPENROUTER_MODEL
@@ -213,8 +272,8 @@ Examples:
         sys.exit(1)
     
     if not openrouter_key:
-        print("ERROR: OPENROUTER_API_KEY not set. Use --openrouter-key or set environment variable.")
-        sys.exit(1)
+        print("INFO: OPENROUTER_API_KEY not set. Using local-deep-research's Ollama as fallback.")
+        print("      Set --openrouter-key for faster/better query enhancement and extraction.")
     
     existing_players = None
     if args.players_json:

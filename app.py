@@ -150,7 +150,7 @@ def preview_query_enhancement(
         return "Please enter an event query.", ""
     
     if not openrouter_key.strip():
-        return "Please enter your OpenRouter API key to preview query enhancement.", ""
+        return "ℹ️ No OpenRouter key provided. A default enhanced query will be used (based on templates).", ""
     
     try:
         analyzer = StakeholderAnalyzer(
@@ -189,14 +189,14 @@ def run_analysis(
         return "Please enter your RapidAPI key.", "", "", "", "", ""
     
     if not openrouter_key.strip():
-        return "Please enter your OpenRouter API key.", "", "", "", "", ""
+        progress(0.05, desc="No OpenRouter key. Using LDR's Ollama as fallback...")
     
     try:
         progress(0.1, desc="Initializing analyzer...")
         
         analyzer = StakeholderAnalyzer(
             rapidapi_key=rapidapi_key,
-            openrouter_key=openrouter_key,
+            openrouter_key=openrouter_key if openrouter_key.strip() else None,
             openrouter_model=model
         )
         
@@ -285,17 +285,17 @@ def create_demo():
                 )
                 
                 openrouter_key = gr.Textbox(
-                    label="OpenRouter API Key",
+                    label="OpenRouter API Key (Optional)",
                     type="password",
-                    placeholder="Enter your OpenRouter key",
-                    info="Get from: openrouter.ai"
+                    placeholder="Leave empty to use LDR's Ollama",
+                    info="Optional - LDR's local LLM will be used as fallback"
                 )
                 
                 model_dropdown = gr.Dropdown(
                     choices=MODEL_OPTIONS,
                     value="anthropic/claude-3.5-sonnet",
-                    label="LLM Model",
-                    info="Select model for analysis"
+                    label="LLM Model (requires OpenRouter key)",
+                    info="Used only when OpenRouter key is provided"
                 )
         
         with gr.Row():
@@ -373,8 +373,8 @@ def create_demo():
            ```
         
         2. **Get API Keys:**
-           - RapidAPI: https://rapidapi.com/worksourcewishes/api/game-theory-nash-equilibrium-predictor
-           - OpenRouter: https://openrouter.ai/keys
+           - **RapidAPI (Required):** https://rapidapi.com/worksourcewishes/api/game-theory-nash-equilibrium-predictor
+           - **OpenRouter (Optional):** https://openrouter.ai/keys - Provides faster/better query enhancement. If not provided, LDR's local Ollama will be used.
         
         3. **Run this app:**
            ```bash
