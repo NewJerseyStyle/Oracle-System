@@ -174,11 +174,11 @@ Higher scores indicate players who:
 
 ### Supported LLM Models
 
-- `anthropic/claude-3.5-sonnet` (recommended)
-- `anthropic/claude-3-haiku` (faster, cheaper)
+- `anthropic/claude-3.6-sonnet` (recommended)
+- `anthropic/claude-3.5-haiku` (faster, cheaper)
 - `openai/gpt-4o`
 - `openai/gpt-4o-mini`
-- `google/gemini-2.0-flash-001`
+- `google/gemini-flash-latest`
 - `meta-llama/llama-3.3-70b-instruct`
 - `deepseek/deepseek-chat`
 
