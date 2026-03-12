@@ -4,18 +4,39 @@ A CLI + Gradio web demo that analyzes geopolitical events to identify stakeholde
 
 ## Features
 
+- **Smart Query Enhancement**: Automatically expands simple queries (e.g., "Iran war") into comprehensive research queries that find all stakeholders, decision-makers, and their influencers
+- **Individual-Level Analysis**: Breaks down organizations and governments into specific individuals (not monolithic actors) to capture internal dynamics and early warning signals of policy shifts
 - **Stakeholder Research**: Uses Local Deep Research to gather information from news sources
 - **LLM-Powered Extraction**: Converts unstructured research into quantified player data
 - **Game Theory Predictions**: Uses Nash Equilibrium API to predict conflict outcomes
 - **Lobby-ability Analysis**: Identifies which stakeholders are most influenceable
 - **Dual Interface**: Both CLI and Gradio web UI
 
+### Why Individual-Level Analysis?
+
+Traditional analysis treats governments and organizations as single actors, missing:
+- **Internal factions** and power struggles
+- **Early warning signals** from individuals before official policy changes
+- **Personal positions** that differ from official institutional positions
+- **Cross-cutting alliances** between individuals across different institutions
+
+Our approach breaks down:
+- **Governments** → Head of state, foreign minister, defense minister, military chiefs, key legislators, faction leaders
+- **Organizations** (UN, EU, NATO) → Secretary General, commissioners, key member state representatives
+- **Corporations/NGOs** → CEO, board members, major shareholders, major donors
+- **Militias/Non-state actors** → Commanders, regional leaders, ideological authorities
+
 ## Quick Start
 
 ### 1. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create venv and install dependencies
+uv venv
+uv pip install -r requirements.txt
 ```
 
 ### 2. Start Local Deep Research
@@ -44,12 +65,12 @@ export OPENROUTER_MODEL="anthropic/claude-3.5-sonnet"
 
 **CLI:**
 ```bash
-python cli.py --event "Iran war stakeholders"
+uv run python cli.py --event "Iran war"
 ```
 
 **Web UI:**
 ```bash
-python app.py
+uv run python app.py
 # Open http://localhost:7860
 ```
 
@@ -67,41 +88,64 @@ python app.py
 
 ## Usage Examples
 
+### Query Enhancement
+
+Don't know how to ask? Just type a simple query and we'll enhance it!
+
+```bash
+# Simple query - automatically enhanced to find all stakeholders
+python cli.py -e "Iran war"
+
+# The query is enhanced to research:
+# - Primary decision-makers (leaders, military, ministers)
+# - Institutional stakeholders (governments, organizations)
+# - Non-state actors (militias, corporations, NGOs)
+# - Influencers (advisors, family, donors, business partners)
+# - Relationships and power dynamics
+```
+
+Use `--no-enhance` to skip query enhancement and use your query as-is.
+
 ### CLI Examples
 
 ```bash
-# Basic analysis
-python cli.py --event "Iran war stakeholders"
+# Simple query (auto-enhanced)
+uv run python cli.py --event "Iran war"
 
 # Verbose output
-python cli.py -e "Gaza conflict" --verbose
+uv run python cli.py -e "Gaza conflict" --verbose
+
+# Skip query enhancement
+uv run python cli.py -e "Iran war stakeholders and decision makers" --no-enhance
 
 # With inline API keys
-python cli.py -e "Taiwan Strait tensions" \
+uv run python cli.py -e "Taiwan Strait tensions" \
     --api-key YOUR_RAPIDAPI_KEY \
     --openrouter-key YOUR_OPENROUTER_KEY
 
 # Save results to JSON
-python cli.py -e "Ukraine war" --output-json results.json
+uv run python cli.py -e "Ukraine war" --output-json results.json
 
 # Use pre-defined players (skip research)
-python cli.py -e "Custom scenario" --no-research --players-json players.json
+uv run python cli.py -e "Custom scenario" --no-research --players-json players.json
 ```
 
 ### Web UI
 
 1. Open http://localhost:7860
 2. Enter your API keys
-3. Type a query like "Iran war stakeholders"
-4. Click "Analyze"
-5. View results in tabs: Stakeholders, War Risk, Lobby-ability
+3. Type a simple query like "Iran war" (we'll enhance it automatically!)
+4. Click "Preview Enhanced Query" to see how your query will be expanded
+5. Click "Run Full Analysis"
+6. View results in tabs: Enhanced Query, Stakeholders, War Risk, Lobby-ability
 
 ### Example Queries
 
-- "Iran war stakeholders and decision makers"
-- "Gaza conflict key players and their positions"
-- "Taiwan Strait tensions stakeholders"
-- "Ukraine war negotiation parties"
+Simple queries that get automatically enhanced:
+- "Iran war" → finds all Iranian conflict stakeholders and influencers
+- "Gaza conflict" → identifies all parties and their networks
+- "Taiwan tensions" → researches Taiwan Strait decision-makers
+- "Ukraine war" → analyzes all actors in the conflict
 - "South China Sea dispute actors"
 
 ## Project Structure
@@ -174,11 +218,11 @@ Higher scores indicate players who:
 
 ### Supported LLM Models
 
-- `anthropic/claude-3.6-sonnet` (recommended)
-- `anthropic/claude-3.5-haiku` (faster, cheaper)
+- `anthropic/claude-3.5-sonnet` (recommended)
+- `anthropic/claude-3-haiku` (faster, cheaper)
 - `openai/gpt-4o`
 - `openai/gpt-4o-mini`
-- `google/gemini-flash-latest`
+- `google/gemini-2.0-flash-001`
 - `meta-llama/llama-3.3-70b-instruct`
 - `deepseek/deepseek-chat`
 
